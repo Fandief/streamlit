@@ -1040,7 +1040,7 @@ def render_download_tab(df: pd.DataFrame) -> None:
 def main() -> None:
     st.title("Dashboard Analisis Sentimen ChatGPT")
     st.markdown(
-        '<div class="small-note">Visualisasi sentimen dari Play Store, YouTube, dan Reddit berdasarkan file CSV klasifikasi yang tersedia.</div>',
+        '<div class="small-note">Visualisasi sentimen dari Play Store, YouTube, dan Reddit.</div>',
         unsafe_allow_html=True,
     )
 
