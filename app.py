@@ -43,6 +43,10 @@ PLATFORM_COLORS = {
     "youtube": "#ef4444",
     "reddit": "#f97316",
 }
+CHART_TEXT_COLOR = "#111827"
+CHART_MUTED_COLOR = "#475569"
+CHART_GRID_COLOR = "#e5e7eb"
+CHART_BACKGROUND = "#ffffff"
 QUARTER_LABELS = {
     1: "Q1 (Jan-Mar)",
     2: "Q2 (Apr-Jun)",
@@ -115,9 +119,9 @@ st.markdown(
     """
     <style>
     :root {
-        --surface: #ffffff;
-        --line: rgba(15, 23, 42, 0.10);
-        --text-soft: #64748b;
+        --surface: var(--secondary-background-color);
+        --line: rgba(128, 128, 128, 0.22);
+        --text-soft: var(--text-color);
     }
     .block-container {
         padding-top: 1.4rem;
@@ -134,6 +138,7 @@ st.markdown(
     }
     div[data-testid="stMetricLabel"] p {
         color: var(--text-soft);
+        opacity: 0.82;
         font-size: 0.9rem;
     }
     div[data-testid="stMetricValue"] {
@@ -141,8 +146,24 @@ st.markdown(
     }
     .small-note {
         color: var(--text-soft);
+        opacity: 0.82;
         font-size: 0.92rem;
         margin-top: -0.4rem;
+    }
+    .chart-help {
+        color: var(--text-color);
+        opacity: 0.86;
+        font-size: 0.93rem;
+        line-height: 1.45;
+        margin: 0.15rem 0 0.55rem 0;
+    }
+    .chart-help strong {
+        color: var(--text-color);
+        opacity: 1;
+    }
+    .chart-help span {
+        color: var(--text-color);
+        opacity: 0.78;
     }
     </style>
     """,
@@ -326,8 +347,42 @@ def empty_state(message: str) -> None:
     st.info(message)
 
 
+def explain_chart(title: str, description: str, reading_hint: str | None = None) -> None:
+    hint = f"<br><span>{reading_hint}</span>" if reading_hint else ""
+    st.markdown(
+        f'<div class="chart-help"><strong>{title}</strong> - {description}{hint}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def apply_chart_style(fig: go.Figure) -> go.Figure:
+    fig.update_layout(
+        template="plotly_white",
+        paper_bgcolor=CHART_BACKGROUND,
+        plot_bgcolor=CHART_BACKGROUND,
+        font=dict(color=CHART_TEXT_COLOR),
+        legend=dict(font=dict(color=CHART_TEXT_COLOR), title_font=dict(color=CHART_TEXT_COLOR)),
+        margin=dict(l=20, r=20),
+    )
+    fig.update_xaxes(
+        color=CHART_TEXT_COLOR,
+        title_font=dict(color=CHART_TEXT_COLOR),
+        tickfont=dict(color=CHART_TEXT_COLOR),
+        gridcolor=CHART_GRID_COLOR,
+        zerolinecolor=CHART_GRID_COLOR,
+    )
+    fig.update_yaxes(
+        color=CHART_TEXT_COLOR,
+        title_font=dict(color=CHART_TEXT_COLOR),
+        tickfont=dict(color=CHART_TEXT_COLOR),
+        gridcolor=CHART_GRID_COLOR,
+        zerolinecolor=CHART_GRID_COLOR,
+    )
+    return fig
+
+
 def show_chart(fig: go.Figure, key: str) -> None:
-    st.plotly_chart(fig, width="stretch", key=key)
+    st.plotly_chart(apply_chart_style(fig), width="stretch", key=key)
 
 
 def plot_bar_sentiment(summary: pd.DataFrame) -> go.Figure:
@@ -368,7 +423,7 @@ def plot_stacked_percentage(summary: pd.DataFrame) -> go.Figure:
         },
     )
     fig.update_yaxes(range=[0, 100], ticksuffix="%")
-    fig.update_traces(textposition="inside")
+    fig.update_traces(textposition="inside", textfont_color="#ffffff")
     fig.update_layout(height=430, legend_title_text="", margin=dict(t=30, b=20))
     return fig
 
@@ -390,7 +445,7 @@ def plot_donut(df: pd.DataFrame) -> go.Figure:
         category_orders={"sentiment": SENTIMENT_ORDER},
         color_discrete_map=SENTIMENT_COLORS,
     )
-    fig.update_traces(textposition="inside", textinfo="percent+label")
+    fig.update_traces(textposition="inside", textinfo="percent+label", insidetextfont_color="#ffffff")
     fig.update_layout(height=430, showlegend=False, margin=dict(t=25, b=15))
     return fig
 
@@ -438,10 +493,11 @@ def plot_heatmap(summary: pd.DataFrame, value_column: str) -> go.Figure:
             texttemplate="%{text}",
             colorscale=[
                 [0.0, "#f8fafc"],
-                [0.35, "#bfdbfe"],
-                [0.7, "#60a5fa"],
-                [1.0, "#1d4ed8"],
+                [0.35, "#dbeafe"],
+                [0.7, "#bfdbfe"],
+                [1.0, "#93c5fd"],
             ],
+            textfont=dict(color=CHART_TEXT_COLOR),
             hovertemplate="Platform: %{y}<br>Sentimen: %{x}<br>Nilai: %{text}<extra></extra>",
         )
     )
@@ -576,21 +632,46 @@ def render_overview_tab(df: pd.DataFrame) -> None:
     st.subheader("Ringkasan Sentimen")
     col1, col2 = st.columns([1.35, 1])
     with col1:
+        explain_chart(
+            "Jumlah sentimen per platform",
+            "grafik batang ini membandingkan jumlah komentar/review Positive, Neutral, dan Negative pada setiap platform.",
+            "Semakin tinggi batangnya, semakin banyak data dengan sentimen tersebut pada platform itu.",
+        )
         show_chart(plot_bar_sentiment(summary), "overview_sentiment_bar")
     with col2:
+        explain_chart(
+            "Proporsi sentimen keseluruhan",
+            "diagram donat ini menunjukkan pembagian sentimen dari seluruh data yang sedang aktif setelah filter.",
+            "Bagian terbesar menunjukkan sentimen yang paling dominan.",
+        )
         show_chart(plot_donut(df), "overview_sentiment_donut")
 
     col3, col4 = st.columns([1.2, 1])
     with col3:
         st.subheader("Komposisi Persentase per Platform")
+        explain_chart(
+            "Persentase sentimen per platform",
+            "grafik bertumpuk ini membuat setiap platform menjadi 100%, lalu membagi porsinya ke Positive, Neutral, dan Negative.",
+            "Gunakan grafik ini untuk membandingkan komposisi sentimen, bukan jumlah data mentah.",
+        )
         show_chart(plot_stacked_percentage(summary), "overview_platform_percentage")
     with col4:
         st.subheader("Heatmap Sentimen")
         heatmap_metric = st.radio("Nilai heatmap", ["percentage", "total"], horizontal=True, label_visibility="collapsed")
+        explain_chart(
+            "Peta intensitas sentimen",
+            "heatmap ini memberi warna lebih kuat pada kombinasi platform dan sentimen yang nilainya lebih besar.",
+            "Mode percentage cocok untuk proporsi; mode total cocok untuk volume data.",
+        )
         show_chart(plot_heatmap(summary, heatmap_metric), f"overview_heatmap_{heatmap_metric}")
 
     st.subheader("Tren Bulanan")
     trend_mode = st.radio("Mode tren", ["Jumlah", "Persentase"], horizontal=True)
+    explain_chart(
+        "Perubahan sentimen dari waktu ke waktu",
+        "grafik garis ini menunjukkan naik-turunnya sentimen tiap bulan untuk masing-masing platform.",
+        "Jika garis Negative naik pada bulan tertentu, berarti keluhan atau komentar negatif meningkat pada periode itu.",
+    )
     show_chart(plot_monthly_trend(trend, trend_mode), f"overview_monthly_trend_{trend_mode}")
 
 
@@ -601,6 +682,11 @@ def render_platform_tab(df: pd.DataFrame) -> None:
 
     col1, col2 = st.columns([1, 1])
     with col1:
+        explain_chart(
+            "Jumlah data per platform",
+            "grafik ini menunjukkan berapa banyak data yang tersedia dari Play Store, YouTube, dan Reddit.",
+            "Platform dengan data paling banyak akan lebih dominan dalam analisis gabungan.",
+        )
         fig_total = px.bar(
             platform_totals.sort_values("total"),
             x="total",
@@ -613,9 +699,19 @@ def render_platform_tab(df: pd.DataFrame) -> None:
         fig_total.update_layout(height=360, showlegend=False, margin=dict(t=20, b=20))
         show_chart(fig_total, "platform_total_bar")
     with col2:
+        explain_chart(
+            "Komposisi sentimen antar platform",
+            "heatmap ini membantu melihat platform mana yang cenderung memiliki porsi Positive, Neutral, atau Negative lebih tinggi.",
+            "Warna yang lebih kuat berarti persentasenya lebih besar.",
+        )
         show_chart(plot_heatmap(summary, "percentage"), "platform_percentage_heatmap")
 
     st.subheader("Distribusi Confidence per Platform")
+    explain_chart(
+        "Sebaran confidence model per platform",
+        "violin plot ini menunjukkan seberapa yakin model saat mengklasifikasikan data di setiap platform.",
+        "Bentuk yang melebar berarti banyak data berada di rentang confidence tersebut; kotak di dalamnya menunjukkan median dan sebaran utama.",
+    )
     fig = px.violin(
         df,
         x="platform",
@@ -635,8 +731,18 @@ def render_confidence_tab(df: pd.DataFrame) -> None:
     st.subheader("Kualitas Prediksi Model")
     col1, col2 = st.columns(2)
     with col1:
+        explain_chart(
+            "Boxplot confidence per sentimen",
+            "boxplot ini merangkum nilai confidence model untuk setiap kelas sentimen.",
+            "Garis tengah menunjukkan median; rentang kotak dan titik ekstrem membantu melihat kestabilan prediksi.",
+        )
         show_chart(plot_confidence_box(df), "confidence_box")
     with col2:
+        explain_chart(
+            "Distribusi confidence",
+            "histogram ini menunjukkan seberapa sering model menghasilkan confidence pada rentang tertentu.",
+            "Jika banyak data mendekati 1.0, model umumnya sangat yakin terhadap prediksinya.",
+        )
         show_chart(plot_confidence_histogram(df), "confidence_histogram")
 
     low_confidence_threshold = st.slider("Ambang confidence rendah", 0.0, 1.0, 0.80, 0.01)
@@ -653,6 +759,11 @@ def render_confidence_tab(df: pd.DataFrame) -> None:
 
 def render_text_tab(df: pd.DataFrame, top_n: int) -> None:
     st.subheader("Kata Paling Sering Muncul")
+    explain_chart(
+        "Frekuensi kata dominan",
+        "grafik ini menampilkan kata yang paling sering muncul pada teks sesuai filter platform dan sentimen.",
+        "Kata dengan frekuensi tinggi dapat menjadi petunjuk topik yang sering dibahas pengguna.",
+    )
 
     col1, col2 = st.columns([1, 1])
     selected_platform = col1.selectbox("Platform untuk kata", ["Semua"] + sorted(df["platform"].unique().tolist()))
@@ -672,6 +783,11 @@ def render_text_tab(df: pd.DataFrame, top_n: int) -> None:
     show_chart(plot_top_words(words_df), "text_top_words")
 
     st.subheader("Contoh Teks")
+    explain_chart(
+        "Contoh data teks",
+        "tabel ini menampilkan contoh komentar atau review terbaru yang sesuai filter aktif.",
+        "Gunakan tabel ini untuk membaca konteks asli dari pola yang muncul di grafik.",
+    )
     sample_columns = ["platform", "date", "predicted_sentiment", "confidence_score", "text"]
     st.dataframe(
         text_df[sample_columns].sort_values("date", ascending=False).head(300),
@@ -682,6 +798,11 @@ def render_text_tab(df: pd.DataFrame, top_n: int) -> None:
 
 def render_detail_tab(filtered_main: pd.DataFrame) -> None:
     st.subheader("Insight Tambahan per Platform")
+    explain_chart(
+        "Analisis tambahan dari file detail",
+        "bagian ini memakai CSV per-platform untuk melihat variabel yang tidak ada di file gabungan utama.",
+        "Contohnya rating Play Store, engagement YouTube, dan komunitas Reddit.",
+    )
     active_platforms = set(filtered_main["platform"].unique())
 
     detail_tabs = st.tabs(["Play Store", "YouTube", "Reddit"])
@@ -730,6 +851,11 @@ def render_playstore_detail(df: pd.DataFrame) -> None:
 
     col1, col2 = st.columns([1, 1])
     with col1:
+        explain_chart(
+            "Rating Play Store per sentimen",
+            "grafik ini membandingkan jumlah review pada setiap rating untuk masing-masing sentimen.",
+            "Rating rendah yang didominasi Negative menunjukkan keluhan pengguna yang konsisten dengan nilai rating.",
+        )
         rating_summary = (
             df.dropna(subset=["rating"])
             .groupby(["rating", "predicted_sentiment"], observed=False)
@@ -749,6 +875,11 @@ def render_playstore_detail(df: pd.DataFrame) -> None:
         fig.update_layout(height=420, legend_title_text="", margin=dict(t=25, b=15))
         show_chart(fig, "playstore_rating_sentiment")
     with col2:
+        explain_chart(
+            "Rata-rata rating per sentimen",
+            "grafik ini menunjukkan rata-rata rating Play Store untuk kelas Positive, Neutral, dan Negative.",
+            "Jika Positive memiliki rating rata-rata lebih tinggi, hasil sentimen selaras dengan penilaian bintang.",
+        )
         rating_avg = (
             df.dropna(subset=["rating"])
             .groupby("predicted_sentiment", observed=False)["rating"]
@@ -786,6 +917,11 @@ def render_youtube_detail(df: pd.DataFrame) -> None:
         .reset_index()
         .melt(id_vars="predicted_sentiment", var_name="metric", value_name="average")
     )
+    explain_chart(
+        "Rata-rata engagement YouTube per sentimen",
+        "grafik ini membandingkan metrik seperti view, like, komentar, like komentar, dan reply berdasarkan sentimen.",
+        "Nilai tinggi pada sentimen tertentu menunjukkan jenis opini itu muncul pada konten dengan engagement lebih besar.",
+    )
     fig = px.bar(
         engagement,
         x="metric",
@@ -808,6 +944,11 @@ def render_youtube_detail(df: pd.DataFrame) -> None:
             .head(15)
             .reset_index()
         )
+        explain_chart(
+            "Video dengan komentar terbanyak",
+            "tabel ini menampilkan judul video yang paling banyak menyumbang data komentar dalam filter aktif.",
+            "Gunakan tabel ini untuk mengetahui sumber percakapan yang paling dominan.",
+        )
         st.dataframe(top_videos, width="stretch", hide_index=True)
 
 
@@ -819,6 +960,11 @@ def render_reddit_detail(df: pd.DataFrame) -> None:
     col1, col2 = st.columns([1, 1])
     with col1:
         if "community_name" in df.columns:
+            explain_chart(
+                "Sentimen per komunitas Reddit",
+                "grafik ini menunjukkan komunitas Reddit mana yang paling banyak memuat data dan bagaimana komposisi sentimennya.",
+                "Komunitas dengan batang panjang adalah sumber diskusi yang paling aktif pada filter saat ini.",
+            )
             community = (
                 df.dropna(subset=["community_name"])
                 .groupby(["community_name", "predicted_sentiment"], observed=False)
@@ -843,6 +989,11 @@ def render_reddit_detail(df: pd.DataFrame) -> None:
     with col2:
         numeric_columns = [column for column in ["up_votes", "up_vote_ratio", "number_of_comments", "number_ofreplies"] if column in df.columns]
         if numeric_columns:
+            explain_chart(
+                "Rata-rata metrik Reddit per sentimen",
+                "grafik ini membandingkan upvote, rasio upvote, jumlah komentar, dan reply berdasarkan sentimen.",
+                "Ini membantu melihat apakah sentimen tertentu lebih sering muncul pada diskusi yang mendapat respons lebih tinggi.",
+            )
             reddit_metric = (
                 df.groupby("predicted_sentiment", observed=False)[numeric_columns]
                 .mean()
@@ -866,6 +1017,11 @@ def render_reddit_detail(df: pd.DataFrame) -> None:
 
 def render_download_tab(df: pd.DataFrame) -> None:
     st.subheader("Data Hasil Filter")
+    explain_chart(
+        "Tabel data setelah filter",
+        "tabel ini berisi data yang sudah mengikuti semua filter di sidebar.",
+        "Data ini dapat diunduh untuk pengecekan manual atau analisis lanjutan.",
+    )
     st.caption(f"Menampilkan {format_number(len(df))} baris sesuai filter aktif.")
 
     columns = ["platform", "date", "month_period", "predicted_sentiment", "confidence_score", "text"]
