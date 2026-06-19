@@ -165,6 +165,15 @@ st.markdown(
         color: var(--text-color);
         opacity: 0.78;
     }
+    .chart-interpretation {
+        color: var(--text-color);
+        opacity: 0.94;
+        font-size: 0.93rem;
+        line-height: 1.45;
+        margin: -0.15rem 0 0.65rem 0;
+        padding-left: 0.75rem;
+        border-left: 3px solid #14b8a6;
+    }
     </style>
     """,
     unsafe_allow_html=True,
@@ -347,12 +356,215 @@ def empty_state(message: str) -> None:
     st.info(message)
 
 
-def explain_chart(title: str, description: str, reading_hint: str | None = None) -> None:
+def explain_chart(
+    title: str,
+    description: str,
+    reading_hint: str | None = None,
+    interpretation: str | None = None,
+    show_interpretation: bool = True,
+) -> None:
     hint = f"<br><span>{reading_hint}</span>" if reading_hint else ""
     st.markdown(
         f'<div class="chart-help"><strong>{title}</strong> - {description}{hint}</div>',
         unsafe_allow_html=True,
     )
+    if interpretation:
+        st.markdown(
+            f'<div class="chart-interpretation">{interpretation}</div>',
+            unsafe_allow_html=True,
+        )
+
+
+def same_selection(selected: list, default: list) -> bool:
+    return set(selected) == set(default) and len(selected) == len(default)
+
+
+def as_percent(value: float) -> str:
+    return f"{value:.1f}%"
+
+
+def month_label(value: pd.Timestamp) -> str:
+    return pd.Timestamp(value).strftime("%Y-%m")
+
+
+def dominant_sentiment_text(df: pd.DataFrame) -> str:
+    total = len(df)
+    if not total:
+        return "Belum ada data untuk diinterpretasikan."
+    counts = df["predicted_sentiment"].value_counts()
+    dominant = str(counts.idxmax())
+    share = counts.max() / total * 100
+    return f"Sentimen {dominant} paling dominan dengan {format_number(counts.max())} data ({as_percent(share)}) dari total {format_number(total)} data."
+
+
+def sentiment_bar_interpretation(summary: pd.DataFrame) -> str:
+    if summary.empty:
+        return "Belum ada data untuk diinterpretasikan."
+    row = summary.sort_values("total", ascending=False).iloc[0]
+    return (
+        f"Kombinasi terbesar adalah {str(row['platform']).title()} - "
+        f"{row['predicted_sentiment']} sebanyak {format_number(row['total'])} data."
+    )
+
+
+def percentage_interpretation(summary: pd.DataFrame) -> str:
+    if summary.empty:
+        return "Belum ada data untuk diinterpretasikan."
+    positive_rows = summary[summary["predicted_sentiment"].astype(str) == "Positive"]
+    negative_rows = summary[summary["predicted_sentiment"].astype(str) == "Negative"]
+    if positive_rows.empty or negative_rows.empty:
+        return "Komposisi sentimen dapat dibaca dari persentase setiap warna pada masing-masing platform."
+    top_positive = positive_rows.sort_values("percentage", ascending=False).iloc[0]
+    top_negative = negative_rows.sort_values("percentage", ascending=False).iloc[0]
+    return (
+        f"Porsi Positive tertinggi ada di {str(top_positive['platform']).title()} "
+        f"({as_percent(top_positive['percentage'])}), sedangkan porsi Negative tertinggi ada di "
+        f"{str(top_negative['platform']).title()} ({as_percent(top_negative['percentage'])})."
+    )
+
+
+def heatmap_interpretation(summary: pd.DataFrame, value_column: str) -> str:
+    if summary.empty:
+        return "Belum ada data untuk diinterpretasikan."
+    row = summary.sort_values(value_column, ascending=False).iloc[0]
+    value = as_percent(row[value_column]) if value_column == "percentage" else format_number(row[value_column])
+    label = "persentase" if value_column == "percentage" else "jumlah"
+    return (
+        f"Nilai {label} tertinggi berada pada {str(row['platform']).title()} - "
+        f"{row['predicted_sentiment']} dengan nilai {value}."
+    )
+
+
+def monthly_trend_interpretation(trend: pd.DataFrame, mode: str) -> str:
+    if trend.empty:
+        return "Belum ada data untuk diinterpretasikan."
+    value_column = "percentage" if mode == "Persentase" else "total"
+    row = trend.sort_values(value_column, ascending=False).iloc[0]
+    value = as_percent(row[value_column]) if value_column == "percentage" else format_number(row[value_column])
+    return (
+        f"Puncak pada grafik ini terjadi di {month_label(row['month'])} untuk "
+        f"{str(row['platform']).title()} - {row['predicted_sentiment']} dengan nilai {value}."
+    )
+
+
+def platform_total_interpretation(df: pd.DataFrame) -> str:
+    if df.empty:
+        return "Belum ada data untuk diinterpretasikan."
+    counts = df["platform"].value_counts()
+    top_platform = str(counts.idxmax())
+    share = counts.max() / len(df) * 100
+    return f"Platform dengan data terbanyak adalah {top_platform.title()} sebanyak {format_number(counts.max())} data ({as_percent(share)})."
+
+
+def platform_confidence_interpretation(df: pd.DataFrame) -> str:
+    if df.empty:
+        return "Belum ada data untuk diinterpretasikan."
+    means = df.groupby("platform", observed=False)["confidence_score"].mean().dropna()
+    if means.empty:
+        return "Belum ada nilai confidence untuk diinterpretasikan."
+    highest = means.idxmax()
+    lowest = means.idxmin()
+    return (
+        f"Rata-rata confidence tertinggi ada pada {str(highest).title()} ({means.max():.3f}), "
+        f"sedangkan yang terendah ada pada {str(lowest).title()} ({means.min():.3f})."
+    )
+
+
+def confidence_box_interpretation(df: pd.DataFrame) -> str:
+    medians = df.groupby("predicted_sentiment", observed=False)["confidence_score"].median().dropna()
+    if medians.empty:
+        return "Belum ada nilai confidence untuk diinterpretasikan."
+    highest = medians.idxmax()
+    return f"Median confidence tertinggi berada pada sentimen {highest} dengan nilai {medians.max():.3f}."
+
+
+def confidence_histogram_interpretation(df: pd.DataFrame) -> str:
+    if df.empty:
+        return "Belum ada data untuk diinterpretasikan."
+    high_confidence_share = (df["confidence_score"] >= 0.9).mean() * 100
+    return f"Sebanyak {as_percent(high_confidence_share)} data memiliki confidence minimal 0.90, sehingga prediksi pada data saat ini didominasi hasil dengan keyakinan tinggi."
+
+
+def top_words_interpretation(words_df: pd.DataFrame) -> str:
+    if words_df.empty:
+        return "Belum ada kata untuk diinterpretasikan."
+    row = words_df.sort_values("count", ascending=False).iloc[0]
+    return f"Kata yang paling sering muncul adalah '{row['word']}' sebanyak {format_number(row['count'])} kali pada data saat ini."
+
+
+def playstore_rating_interpretation(df: pd.DataFrame) -> str:
+    if df.empty or "rating" not in df.columns:
+        return "Belum ada rating Play Store untuk diinterpretasikan."
+    rating_counts = df["rating"].dropna().value_counts()
+    if rating_counts.empty:
+        return "Belum ada rating Play Store untuk diinterpretasikan."
+    top_rating = rating_counts.idxmax()
+    share = rating_counts.max() / rating_counts.sum() * 100
+    return f"Rating yang paling sering muncul adalah {top_rating:g} bintang sebanyak {format_number(rating_counts.max())} review ({as_percent(share)})."
+
+
+def playstore_average_rating_interpretation(df: pd.DataFrame) -> str:
+    if df.empty or "rating" not in df.columns:
+        return "Belum ada rating Play Store untuk diinterpretasikan."
+    averages = df.groupby("predicted_sentiment", observed=False)["rating"].mean().dropna()
+    if averages.empty:
+        return "Belum ada rata-rata rating untuk diinterpretasikan."
+    highest = averages.idxmax()
+    lowest = averages.idxmin()
+    return (
+        f"Rata-rata rating tertinggi ada pada sentimen {highest} ({averages.max():.2f}), "
+        f"sedangkan terendah pada {lowest} ({averages.min():.2f})."
+    )
+
+
+def youtube_engagement_interpretation(engagement: pd.DataFrame) -> str:
+    clean = engagement.dropna(subset=["average"])
+    if clean.empty:
+        return "Belum ada metrik engagement YouTube untuk diinterpretasikan."
+    row = clean.sort_values("average", ascending=False).iloc[0]
+    return (
+        f"Rata-rata tertinggi ada pada metrik {row['metric']} untuk sentimen "
+        f"{row['predicted_sentiment']} dengan nilai {format_number(row['average'])}."
+    )
+
+
+def top_videos_interpretation(top_videos: pd.DataFrame) -> str:
+    if top_videos.empty:
+        return "Belum ada video untuk diinterpretasikan."
+    row = top_videos.iloc[0]
+    title = str(row["videoTitle"])
+    if len(title) > 80:
+        title = f"{title[:77]}..."
+    return f"Video yang paling banyak menyumbang komentar adalah '{title}' dengan {format_number(row['total_komentar'])} komentar."
+
+
+def reddit_community_interpretation(community: pd.DataFrame) -> str:
+    if community.empty:
+        return "Belum ada komunitas Reddit untuk diinterpretasikan."
+    totals = community.groupby("community_name", observed=False)["total"].sum().sort_values(ascending=False)
+    if totals.empty:
+        return "Belum ada komunitas Reddit untuk diinterpretasikan."
+    top_name = totals.index[0]
+    return f"Komunitas paling aktif pada data saat ini adalah {top_name} dengan {format_number(totals.iloc[0])} data."
+
+
+def reddit_metric_interpretation(metrics: pd.DataFrame) -> str:
+    clean = metrics.dropna(subset=["average"])
+    if clean.empty:
+        return "Belum ada metrik Reddit untuk diinterpretasikan."
+    row = clean.sort_values("average", ascending=False).iloc[0]
+    return (
+        f"Nilai rata-rata tertinggi ada pada metrik {row['metric']} untuk sentimen "
+        f"{row['predicted_sentiment']} dengan nilai {row['average']:.2f}."
+    )
+
+
+def table_interpretation(df: pd.DataFrame) -> str:
+    if df.empty:
+        return "Belum ada data untuk ditampilkan."
+    first_date = df["date"].min().date()
+    last_date = df["date"].max().date()
+    return f"Tabel ini memuat data dari {first_date} sampai {last_date}; pratinjau dibatasi maksimal 1.000 baris terbaru."
 
 
 def apply_chart_style(fig: go.Figure) -> go.Figure:
@@ -554,7 +766,7 @@ def plot_top_words(words_df: pd.DataFrame) -> go.Figure:
 
 def render_sidebar(
     df: pd.DataFrame,
-) -> tuple[list[str], list[str], list[int], list[str], tuple | None, tuple[float, float], str, int]:
+) -> tuple[list[str], list[str], list[int], list[str], tuple | None, tuple[float, float], str, int, bool]:
     st.sidebar.header("Filter")
 
     platforms = sorted(df["platform"].dropna().unique().tolist())
@@ -591,11 +803,12 @@ def render_sidebar(
 
     confidence_min = float(df["confidence_score"].min())
     confidence_max = float(df["confidence_score"].max())
+    default_confidence = (max(0.0, round(confidence_min, 2)), min(1.0, round(confidence_max, 2)))
     selected_confidence = st.sidebar.slider(
         "Confidence score",
         min_value=0.0,
         max_value=1.0,
-        value=(max(0.0, round(confidence_min, 2)), min(1.0, round(confidence_max, 2))),
+        value=default_confidence,
         step=0.01,
     )
 
@@ -604,10 +817,30 @@ def render_sidebar(
 
     st.sidebar.divider()
     st.sidebar.caption("Data utama: all_platforms_classified_final.csv")
-    return selected_platforms, selected_sentiments, selected_years, selected_quarters, selected_dates, selected_confidence, search_text, top_n
+    is_default_view = (
+        same_selection(selected_platforms, platforms)
+        and same_selection(selected_sentiments, sentiments)
+        and same_selection(selected_years, year_options)
+        and same_selection(selected_quarters, [label for _, label in sorted(QUARTER_LABELS.items()) if label in set(df["quarter_label"].dropna())])
+        and selected_dates is None
+        and selected_confidence == default_confidence
+        and not search_text.strip()
+        and top_n == 25
+    )
+    return (
+        selected_platforms,
+        selected_sentiments,
+        selected_years,
+        selected_quarters,
+        selected_dates,
+        selected_confidence,
+        search_text,
+        top_n,
+        is_default_view,
+    )
 
 
-def render_kpis(df: pd.DataFrame) -> None:
+def render_kpis(df: pd.DataFrame, is_default_view: bool) -> None:
     total_rows = len(df)
     sentiment_counts = df["predicted_sentiment"].value_counts()
     positive_pct = sentiment_counts.get("Positive", 0) / total_rows * 100 if total_rows else 0
@@ -623,9 +856,16 @@ def render_kpis(df: pd.DataFrame) -> None:
     col4.metric("Negative", pct(negative_pct))
     col5.metric("Rata-rata confidence", f"{avg_confidence:.3f}" if pd.notna(avg_confidence) else "-")
     col6.metric("Platform dominan", str(dominant_platform).title())
+    explain_chart(
+        "Ringkasan kartu metrik",
+        "kartu di atas merangkum total data, komposisi sentimen, rata-rata confidence, dan platform dominan.",
+        "Setelah filter diubah, nilai kartu otomatis mengikuti data yang tersisa.",
+        dominant_sentiment_text(df),
+        is_default_view,
+    )
 
 
-def render_overview_tab(df: pd.DataFrame) -> None:
+def render_overview_tab(df: pd.DataFrame, is_default_view: bool) -> None:
     summary = build_sentiment_summary(df)
     trend = build_monthly_trend(df)
 
@@ -636,6 +876,8 @@ def render_overview_tab(df: pd.DataFrame) -> None:
             "Jumlah sentimen per platform",
             "grafik batang ini membandingkan jumlah komentar/review Positive, Neutral, dan Negative pada setiap platform.",
             "Semakin tinggi batangnya, semakin banyak data dengan sentimen tersebut pada platform itu.",
+            sentiment_bar_interpretation(summary),
+            is_default_view,
         )
         show_chart(plot_bar_sentiment(summary), "overview_sentiment_bar")
     with col2:
@@ -643,6 +885,8 @@ def render_overview_tab(df: pd.DataFrame) -> None:
             "Proporsi sentimen keseluruhan",
             "diagram donat ini menunjukkan pembagian sentimen dari seluruh data yang sedang aktif setelah filter.",
             "Bagian terbesar menunjukkan sentimen yang paling dominan.",
+            dominant_sentiment_text(df),
+            is_default_view,
         )
         show_chart(plot_donut(df), "overview_sentiment_donut")
 
@@ -653,6 +897,8 @@ def render_overview_tab(df: pd.DataFrame) -> None:
             "Persentase sentimen per platform",
             "grafik bertumpuk ini membuat setiap platform menjadi 100%, lalu membagi porsinya ke Positive, Neutral, dan Negative.",
             "Gunakan grafik ini untuk membandingkan komposisi sentimen, bukan jumlah data mentah.",
+            percentage_interpretation(summary),
+            is_default_view,
         )
         show_chart(plot_stacked_percentage(summary), "overview_platform_percentage")
     with col4:
@@ -662,6 +908,8 @@ def render_overview_tab(df: pd.DataFrame) -> None:
             "Peta intensitas sentimen",
             "heatmap ini memberi warna lebih kuat pada kombinasi platform dan sentimen yang nilainya lebih besar.",
             "Mode percentage cocok untuk proporsi; mode total cocok untuk volume data.",
+            heatmap_interpretation(summary, heatmap_metric),
+            is_default_view and heatmap_metric == "percentage",
         )
         show_chart(plot_heatmap(summary, heatmap_metric), f"overview_heatmap_{heatmap_metric}")
 
@@ -671,11 +919,13 @@ def render_overview_tab(df: pd.DataFrame) -> None:
         "Perubahan sentimen dari waktu ke waktu",
         "grafik garis ini menunjukkan naik-turunnya sentimen tiap bulan untuk masing-masing platform.",
         "Jika garis Negative naik pada bulan tertentu, berarti keluhan atau komentar negatif meningkat pada periode itu.",
+        monthly_trend_interpretation(trend, trend_mode),
+        is_default_view and trend_mode == "Jumlah",
     )
     show_chart(plot_monthly_trend(trend, trend_mode), f"overview_monthly_trend_{trend_mode}")
 
 
-def render_platform_tab(df: pd.DataFrame) -> None:
+def render_platform_tab(df: pd.DataFrame, is_default_view: bool) -> None:
     st.subheader("Perbandingan Platform")
     summary = build_sentiment_summary(df)
     platform_totals = df["platform"].value_counts().rename_axis("platform").reset_index(name="total")
@@ -686,6 +936,8 @@ def render_platform_tab(df: pd.DataFrame) -> None:
             "Jumlah data per platform",
             "grafik ini menunjukkan berapa banyak data yang tersedia dari Play Store, YouTube, dan Reddit.",
             "Platform dengan data paling banyak akan lebih dominan dalam analisis gabungan.",
+            platform_total_interpretation(df),
+            is_default_view,
         )
         fig_total = px.bar(
             platform_totals.sort_values("total"),
@@ -703,6 +955,8 @@ def render_platform_tab(df: pd.DataFrame) -> None:
             "Komposisi sentimen antar platform",
             "heatmap ini membantu melihat platform mana yang cenderung memiliki porsi Positive, Neutral, atau Negative lebih tinggi.",
             "Warna yang lebih kuat berarti persentasenya lebih besar.",
+            percentage_interpretation(summary),
+            is_default_view,
         )
         show_chart(plot_heatmap(summary, "percentage"), "platform_percentage_heatmap")
 
@@ -711,6 +965,8 @@ def render_platform_tab(df: pd.DataFrame) -> None:
         "Sebaran confidence model per platform",
         "violin plot ini menunjukkan seberapa yakin model saat mengklasifikasikan data di setiap platform.",
         "Bentuk yang melebar berarti banyak data berada di rentang confidence tersebut; kotak di dalamnya menunjukkan median dan sebaran utama.",
+        platform_confidence_interpretation(df),
+        is_default_view,
     )
     fig = px.violin(
         df,
@@ -727,7 +983,7 @@ def render_platform_tab(df: pd.DataFrame) -> None:
     show_chart(fig, "platform_confidence_violin")
 
 
-def render_confidence_tab(df: pd.DataFrame) -> None:
+def render_confidence_tab(df: pd.DataFrame, is_default_view: bool) -> None:
     st.subheader("Kualitas Prediksi Model")
     col1, col2 = st.columns(2)
     with col1:
@@ -735,6 +991,8 @@ def render_confidence_tab(df: pd.DataFrame) -> None:
             "Boxplot confidence per sentimen",
             "boxplot ini merangkum nilai confidence model untuk setiap kelas sentimen.",
             "Garis tengah menunjukkan median; rentang kotak dan titik ekstrem membantu melihat kestabilan prediksi.",
+            confidence_box_interpretation(df),
+            is_default_view,
         )
         show_chart(plot_confidence_box(df), "confidence_box")
     with col2:
@@ -742,6 +1000,8 @@ def render_confidence_tab(df: pd.DataFrame) -> None:
             "Distribusi confidence",
             "histogram ini menunjukkan seberapa sering model menghasilkan confidence pada rentang tertentu.",
             "Jika banyak data mendekati 1.0, model umumnya sangat yakin terhadap prediksinya.",
+            confidence_histogram_interpretation(df),
+            is_default_view,
         )
         show_chart(plot_confidence_histogram(df), "confidence_histogram")
 
@@ -757,13 +1017,8 @@ def render_confidence_tab(df: pd.DataFrame) -> None:
         )
 
 
-def render_text_tab(df: pd.DataFrame, top_n: int) -> None:
+def render_text_tab(df: pd.DataFrame, top_n: int, is_default_view: bool) -> None:
     st.subheader("Kata Paling Sering Muncul")
-    explain_chart(
-        "Frekuensi kata dominan",
-        "grafik ini menampilkan kata yang paling sering muncul pada teks sesuai filter platform dan sentimen.",
-        "Kata dengan frekuensi tinggi dapat menjadi petunjuk topik yang sering dibahas pengguna.",
-    )
 
     col1, col2 = st.columns([1, 1])
     selected_platform = col1.selectbox("Platform untuk kata", ["Semua"] + sorted(df["platform"].unique().tolist()))
@@ -780,6 +1035,14 @@ def render_text_tab(df: pd.DataFrame, top_n: int) -> None:
         empty_state("Tidak ada kata yang cukup untuk filter ini.")
         return
 
+    is_default_text_view = is_default_view and selected_platform == "Semua" and selected_sentiment == "Semua"
+    explain_chart(
+        "Frekuensi kata dominan",
+        "grafik ini menampilkan kata yang paling sering muncul pada teks sesuai filter platform dan sentimen.",
+        "Kata dengan frekuensi tinggi dapat menjadi petunjuk topik yang sering dibahas pengguna.",
+        top_words_interpretation(words_df),
+        is_default_text_view,
+    )
     show_chart(plot_top_words(words_df), "text_top_words")
 
     st.subheader("Contoh Teks")
@@ -787,6 +1050,8 @@ def render_text_tab(df: pd.DataFrame, top_n: int) -> None:
         "Contoh data teks",
         "tabel ini menampilkan contoh komentar atau review terbaru yang sesuai filter aktif.",
         "Gunakan tabel ini untuk membaca konteks asli dari pola yang muncul di grafik.",
+        f"Tabel ini menampilkan {format_number(min(len(text_df), 300))} contoh terbaru dari total {format_number(len(text_df))} data yang sedang aktif.",
+        is_default_text_view,
     )
     sample_columns = ["platform", "date", "predicted_sentiment", "confidence_score", "text"]
     st.dataframe(
@@ -796,7 +1061,7 @@ def render_text_tab(df: pd.DataFrame, top_n: int) -> None:
     )
 
 
-def render_detail_tab(filtered_main: pd.DataFrame) -> None:
+def render_detail_tab(filtered_main: pd.DataFrame, is_default_view: bool) -> None:
     st.subheader("Insight Tambahan per Platform")
     explain_chart(
         "Analisis tambahan dari file detail",
@@ -813,7 +1078,7 @@ def render_detail_tab(filtered_main: pd.DataFrame) -> None:
         else:
             playstore = load_detail_data("playstore", DETAIL_FILES["playstore"])
             playstore = filter_detail_by_main(playstore, filtered_main)
-            render_playstore_detail(playstore)
+            render_playstore_detail(playstore, is_default_view)
 
     with detail_tabs[1]:
         if "youtube" not in active_platforms:
@@ -821,7 +1086,7 @@ def render_detail_tab(filtered_main: pd.DataFrame) -> None:
         else:
             youtube = load_detail_data("youtube", DETAIL_FILES["youtube"])
             youtube = filter_detail_by_main(youtube, filtered_main)
-            render_youtube_detail(youtube)
+            render_youtube_detail(youtube, is_default_view)
 
     with detail_tabs[2]:
         if "reddit" not in active_platforms:
@@ -829,7 +1094,7 @@ def render_detail_tab(filtered_main: pd.DataFrame) -> None:
         else:
             reddit = load_detail_data("reddit", DETAIL_FILES["reddit"])
             reddit = filter_detail_by_main(reddit, filtered_main)
-            render_reddit_detail(reddit)
+            render_reddit_detail(reddit, is_default_view)
 
 
 def filter_detail_by_main(detail_df: pd.DataFrame, main_df: pd.DataFrame) -> pd.DataFrame:
@@ -844,7 +1109,7 @@ def filter_detail_by_main(detail_df: pd.DataFrame, main_df: pd.DataFrame) -> pd.
     return detail_df
 
 
-def render_playstore_detail(df: pd.DataFrame) -> None:
+def render_playstore_detail(df: pd.DataFrame, is_default_view: bool) -> None:
     if df.empty or "rating" not in df.columns:
         empty_state("Data detail Play Store belum tersedia untuk filter ini.")
         return
@@ -855,6 +1120,8 @@ def render_playstore_detail(df: pd.DataFrame) -> None:
             "Rating Play Store per sentimen",
             "grafik ini membandingkan jumlah review pada setiap rating untuk masing-masing sentimen.",
             "Rating rendah yang didominasi Negative menunjukkan keluhan pengguna yang konsisten dengan nilai rating.",
+            playstore_rating_interpretation(df),
+            is_default_view,
         )
         rating_summary = (
             df.dropna(subset=["rating"])
@@ -879,6 +1146,8 @@ def render_playstore_detail(df: pd.DataFrame) -> None:
             "Rata-rata rating per sentimen",
             "grafik ini menunjukkan rata-rata rating Play Store untuk kelas Positive, Neutral, dan Negative.",
             "Jika Positive memiliki rating rata-rata lebih tinggi, hasil sentimen selaras dengan penilaian bintang.",
+            playstore_average_rating_interpretation(df),
+            is_default_view,
         )
         rating_avg = (
             df.dropna(subset=["rating"])
@@ -900,7 +1169,7 @@ def render_playstore_detail(df: pd.DataFrame) -> None:
         show_chart(fig, "playstore_rating_average")
 
 
-def render_youtube_detail(df: pd.DataFrame) -> None:
+def render_youtube_detail(df: pd.DataFrame, is_default_view: bool) -> None:
     if df.empty:
         empty_state("Data detail YouTube belum tersedia untuk filter ini.")
         return
@@ -921,6 +1190,8 @@ def render_youtube_detail(df: pd.DataFrame) -> None:
         "Rata-rata engagement YouTube per sentimen",
         "grafik ini membandingkan metrik seperti view, like, komentar, like komentar, dan reply berdasarkan sentimen.",
         "Nilai tinggi pada sentimen tertentu menunjukkan jenis opini itu muncul pada konten dengan engagement lebih besar.",
+        youtube_engagement_interpretation(engagement),
+        is_default_view,
     )
     fig = px.bar(
         engagement,
@@ -948,11 +1219,13 @@ def render_youtube_detail(df: pd.DataFrame) -> None:
             "Video dengan komentar terbanyak",
             "tabel ini menampilkan judul video yang paling banyak menyumbang data komentar dalam filter aktif.",
             "Gunakan tabel ini untuk mengetahui sumber percakapan yang paling dominan.",
+            top_videos_interpretation(top_videos),
+            is_default_view,
         )
         st.dataframe(top_videos, width="stretch", hide_index=True)
 
 
-def render_reddit_detail(df: pd.DataFrame) -> None:
+def render_reddit_detail(df: pd.DataFrame, is_default_view: bool) -> None:
     if df.empty:
         empty_state("Data detail Reddit belum tersedia untuk filter ini.")
         return
@@ -960,11 +1233,6 @@ def render_reddit_detail(df: pd.DataFrame) -> None:
     col1, col2 = st.columns([1, 1])
     with col1:
         if "community_name" in df.columns:
-            explain_chart(
-                "Sentimen per komunitas Reddit",
-                "grafik ini menunjukkan komunitas Reddit mana yang paling banyak memuat data dan bagaimana komposisi sentimennya.",
-                "Komunitas dengan batang panjang adalah sumber diskusi yang paling aktif pada filter saat ini.",
-            )
             community = (
                 df.dropna(subset=["community_name"])
                 .groupby(["community_name", "predicted_sentiment"], observed=False)
@@ -973,6 +1241,13 @@ def render_reddit_detail(df: pd.DataFrame) -> None:
             )
             top_communities = community.groupby("community_name")["total"].sum().nlargest(10).index
             community = community[community["community_name"].isin(top_communities)]
+            explain_chart(
+                "Sentimen per komunitas Reddit",
+                "grafik ini menunjukkan komunitas Reddit mana yang paling banyak memuat data dan bagaimana komposisi sentimennya.",
+                "Komunitas dengan batang panjang adalah sumber diskusi yang paling aktif pada filter saat ini.",
+                reddit_community_interpretation(community),
+                is_default_view,
+            )
             fig = px.bar(
                 community,
                 x="total",
@@ -989,17 +1264,19 @@ def render_reddit_detail(df: pd.DataFrame) -> None:
     with col2:
         numeric_columns = [column for column in ["up_votes", "up_vote_ratio", "number_of_comments", "number_ofreplies"] if column in df.columns]
         if numeric_columns:
-            explain_chart(
-                "Rata-rata metrik Reddit per sentimen",
-                "grafik ini membandingkan upvote, rasio upvote, jumlah komentar, dan reply berdasarkan sentimen.",
-                "Ini membantu melihat apakah sentimen tertentu lebih sering muncul pada diskusi yang mendapat respons lebih tinggi.",
-            )
             reddit_metric = (
                 df.groupby("predicted_sentiment", observed=False)[numeric_columns]
                 .mean()
                 .reindex(SENTIMENT_ORDER)
                 .reset_index()
                 .melt(id_vars="predicted_sentiment", var_name="metric", value_name="average")
+            )
+            explain_chart(
+                "Rata-rata metrik Reddit per sentimen",
+                "grafik ini membandingkan upvote, rasio upvote, jumlah komentar, dan reply berdasarkan sentimen.",
+                "Ini membantu melihat apakah sentimen tertentu lebih sering muncul pada diskusi yang mendapat respons lebih tinggi.",
+                reddit_metric_interpretation(reddit_metric),
+                is_default_view,
             )
             fig = px.bar(
                 reddit_metric,
@@ -1015,12 +1292,14 @@ def render_reddit_detail(df: pd.DataFrame) -> None:
             show_chart(fig, "reddit_metrics")
 
 
-def render_download_tab(df: pd.DataFrame) -> None:
+def render_download_tab(df: pd.DataFrame, is_default_view: bool) -> None:
     st.subheader("Data Hasil Filter")
     explain_chart(
         "Tabel data setelah filter",
         "tabel ini berisi data yang sudah mengikuti semua filter di sidebar.",
         "Data ini dapat diunduh untuk pengecekan manual atau analisis lanjutan.",
+        table_interpretation(df),
+        is_default_view,
     )
     st.caption(f"Menampilkan {format_number(len(df))} baris sesuai filter aktif.")
 
@@ -1059,6 +1338,7 @@ def main() -> None:
         selected_confidence,
         search_text,
         top_n,
+        is_default_view,
     ) = render_sidebar(df)
 
     if not selected_platforms or not selected_sentiments or not selected_years or not selected_quarters:
@@ -1080,7 +1360,7 @@ def main() -> None:
         empty_state("Tidak ada data yang cocok dengan filter saat ini.")
         st.stop()
 
-    render_kpis(filtered_df)
+    render_kpis(filtered_df, is_default_view)
     st.divider()
 
     tab_overview, tab_platform, tab_confidence, tab_text, tab_detail, tab_data = st.tabs(
@@ -1095,17 +1375,17 @@ def main() -> None:
     )
 
     with tab_overview:
-        render_overview_tab(filtered_df)
+        render_overview_tab(filtered_df, is_default_view)
     with tab_platform:
-        render_platform_tab(filtered_df)
+        render_platform_tab(filtered_df, is_default_view)
     with tab_confidence:
-        render_confidence_tab(filtered_df)
+        render_confidence_tab(filtered_df, is_default_view)
     with tab_text:
-        render_text_tab(filtered_df, top_n)
+        render_text_tab(filtered_df, top_n, is_default_view)
     with tab_detail:
-        render_detail_tab(filtered_df)
+        render_detail_tab(filtered_df, is_default_view)
     with tab_data:
-        render_download_tab(filtered_df)
+        render_download_tab(filtered_df, is_default_view)
 
 
 if __name__ == "__main__":
