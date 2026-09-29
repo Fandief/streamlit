@@ -1,0 +1,12 @@
+# Python / Streamlit local files
+.venv/
+__pycache__/
+*.py[cod]
+
+# Runtime logs
+streamlit.log
+streamlit.err
+
+# Source CSVs are replaced by compressed data files
+*.csv
+
