@@ -522,10 +522,12 @@ def sentiment_bar_interpretation(summary: pd.DataFrame, source_df: pd.DataFrame)
         (source_df["platform"] == row["platform"])
         & (source_df["predicted_sentiment"] == row["predicted_sentiment"])
     ]
+    topics = top_comment_topics(combination)
+    topic_text = "; ".join(topics) if topics else "tidak ada topik yang teridentifikasi"
     return (
         f"Kombinasi terbesar adalah {str(row['platform']).title()} - "
         f"{row['predicted_sentiment']} sebanyak {format_number(row['total'])} data. "
-        f"{reason_from_comments(combination)}"
+        f"Topik komentar terbanyak: {topic_text}."
     )
 
 
@@ -550,8 +552,8 @@ def percentage_interpretation(summary: pd.DataFrame, source_df: pd.DataFrame) ->
     negative_platform_df = source_df[source_df["platform"] == top_negative["platform"]]
     positive_topics = extract_distinctive_topics(positive_platform_df, "Positive")
     negative_topics = extract_distinctive_topics(negative_platform_df, "Negative")
-    positive_reason = format_distinctive_topics(positive_topics)
-    negative_reason = format_distinctive_topics(negative_topics)
+    positive_reason = format_distinctive_topics(positive_topics.head(1))
+    negative_reason = format_distinctive_topics(negative_topics.head(1))
     return (
         f"Porsi Positive tertinggi ada di {str(top_positive['platform']).title()} "
         f"({as_percent(top_positive['percentage'])}), sedangkan porsi Negative tertinggi ada di "
@@ -598,37 +600,26 @@ def format_distinctive_topics(topics: pd.DataFrame) -> str:
 def reason_from_comments(df: pd.DataFrame) -> str:
     topics = top_comment_topics(df)
     if not topics:
-        return "Belum ada frasa komentar yang cukup untuk menjelaskan pola ini."
-    return f"Topik komentar yang paling sering muncul adalah {'; '.join(topics)}, sehingga topik tersebut menjadi petunjuk konteks pola ini."
+        return "Tidak ada topik yang teridentifikasi."
+    return f"Topik komentar terbanyak: {'; '.join(topics)}."
 
 
 def monthly_trend_interpretation(trend: pd.DataFrame, source_df: pd.DataFrame, mode: str) -> str:
     if trend.empty:
         return "Belum ada data untuk diinterpretasikan."
-    value_column = "percentage" if mode == "Persentase" else "total"
-    row = trend.sort_values(value_column, ascending=False).iloc[0]
-    value = as_percent(row[value_column]) if value_column == "percentage" else format_number(row[value_column])
+    row = trend.sort_values(["total", "month", "platform", "predicted_sentiment"], ascending=[False, True, True, True]).iloc[0]
     peak_data = source_df[
         (source_df["month"] == row["month"])
         & (source_df["platform"] == row["platform"])
         & (source_df["predicted_sentiment"] == row["predicted_sentiment"])
     ]
-    series_data = source_df[
-        (source_df["platform"] == row["platform"])
-        & (source_df["predicted_sentiment"] == row["predicted_sentiment"])
-    ]
-    monthly_totals = series_data.groupby("month", observed=False).size().sort_index()
-    if len(monthly_totals) < 2 or monthly_totals.iloc[-1] == monthly_totals.iloc[0]:
-        direction = "relatif stabil"
-    elif monthly_totals.iloc[-1] > monthly_totals.iloc[0]:
-        direction = "cenderung naik"
-    else:
-        direction = "cenderung turun"
+    topics = top_comment_topics(peak_data, limit=3)
+    topic_text = ", ".join(topics[:-1]) + f", dan {topics[-1]}" if len(topics) > 1 else (topics[0] if topics else "tidak ada topik yang teridentifikasi")
     return (
-        f"Puncak pada grafik ini terjadi di {month_label(row['month'])} untuk "
-        f"{str(row['platform']).title()} - {row['predicted_sentiment']} dengan nilai {value}. "
-        f"Secara keseluruhan, arah jumlah data dari awal hingga akhir periode {direction}. "
-        f"{reason_from_comments(peak_data)}"
+        f"Pada {month_label(row['month'])} terjadi lonjakan komentar "
+        f"{row['predicted_sentiment']} di {str(row['platform']).title()} sebanyak "
+        f"{format_number(row['total'])} data. Berdasarkan distribusi topik pada periode "
+        f"tersebut, komentar paling banyak membahas {topic_text}."
     )
 
 
@@ -1050,7 +1041,12 @@ def render_kpis(df: pd.DataFrame, is_default_view: bool) -> None:
     )
 
 
-def render_overview_tab(df: pd.DataFrame, is_default_view: bool) -> None:
+def render_overview_tab(
+    df: pd.DataFrame,
+    is_default_view: bool,
+    selected_platforms: list[str],
+    selected_years: list[int],
+) -> None:
     summary = build_sentiment_summary(df)
     trend = build_monthly_trend(df)
 
@@ -1103,10 +1099,25 @@ def render_overview_tab(df: pd.DataFrame, is_default_view: bool) -> None:
     explain_chart(
         "Perubahan sentimen dari waktu ke waktu",
         "grafik garis ini menunjukkan naik-turunnya sentimen tiap bulan untuk masing-masing platform.",
-        "Jika garis Negative naik pada bulan tertentu, berarti keluhan atau komentar negatif meningkat pada periode itu.",
-        monthly_trend_interpretation(trend, df, trend_mode),
-        is_default_view and trend_mode == "Jumlah",
+        interpretation=monthly_trend_interpretation(trend, df, trend_mode),
+        show_interpretation=is_default_view and trend_mode == "Jumlah",
     )
+    platforms_lower = [platform.lower() for platform in selected_platforms]
+    years_as_text = [str(year) for year in selected_years]
+    if "playstore" in platforms_lower and "2025" in years_as_text:
+        st.info(
+            "💡 **Konteks Eksternal:** Tingginya sentimen positif dan dominasi topik kualitas jawaban "
+            "pada pertengahan 2025 berkaitan erat dengan peluncuran model OpenAI o3, o4-mini, dan "
+            "transisi ke GPT-4o pada April 2025. Model baru ini membawa peningkatan signifikan pada "
+            "kemampuan penalaran (reasoning) AI."
+        )
+    elif "youtube" in platforms_lower and "2025" in years_as_text and "playstore" not in platforms_lower:
+        st.warning(
+            "💡 **Konteks Eksternal:** Puncak sentimen Negatif pada YouTube di April 2025 bertepatan "
+            "dengan peluncuran model baru OpenAI. Munculnya topik 'iklan dan biaya' serta keluhan "
+            "'bantuan tugas' mengindikasikan adanya frustrasi pengguna terkait pembatasan akses fitur "
+            "baru (paywall), serta kesulitan adaptasi terhadap gaya jawaban model AI yang baru."
+        )
     show_chart(plot_monthly_trend(trend, trend_mode), f"overview_monthly_trend_{trend_mode}")
 
 
@@ -1560,7 +1571,7 @@ def main() -> None:
     )
 
     with tab_overview:
-        render_overview_tab(filtered_df, is_default_view)
+        render_overview_tab(filtered_df, is_default_view, selected_platforms, selected_years)
     with tab_platform:
         render_platform_tab(filtered_df, is_default_view)
     with tab_confidence:

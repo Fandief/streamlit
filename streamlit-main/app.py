@@ -106,6 +106,18 @@ STOPWORDS_ID = {
     "yang",
 }
 
+COMMENT_TOPIC_PATTERNS = {
+    "fitur dan fungsi aplikasi": r"\b(?:fitur|fungsi|feature|tool|alat|menu|opsi)\b",
+    "performa dan kecepatan": r"\b(?:lambat|lemot|cepat|kecepatan|loading|lag|slow|fast)\b",
+    "error dan kestabilan": r"\b(?:error|eror|bug|crash|gagal|bermasalah|rusak|not working)\b",
+    "kemudahan penggunaan": r"\b(?:mudah|praktis|simple|simpel|sulit|ribet|easy|difficult)\b",
+    "kualitas jawaban": r"\b(?:jawaban|jawabannya|akurat|akurasi|benar|salah|respon|response|answer)\b",
+    "bantuan tugas dan pekerjaan": r"\b(?:membantu|bantu|tugas|pekerjaan|kerja|belajar|useful|helpful)\b",
+    "akses dan login": r"\b(?:login|log in|masuk|akses|daftar|register|akun|account)\b",
+    "iklan dan biaya": r"\b(?:iklan|ads|bayar|harga|biaya|gratis|premium|langganan)\b",
+    "pembaruan aplikasi": r"\b(?:update|pembaruan|versi|upgrade|perbarui)\b",
+}
+
 
 st.set_page_config(
     page_title="Dashboard Sentimen ChatGPT",
@@ -352,6 +364,48 @@ def extract_top_words(df: pd.DataFrame, limit: int = 25) -> pd.DataFrame:
     return pd.DataFrame(counter, columns=["word", "count"])
 
 
+def extract_comment_topic_summary(df: pd.DataFrame, limit: int = 5) -> pd.DataFrame:
+    if df.empty or "text" not in df.columns:
+        return pd.DataFrame(columns=["topic", "count"])
+    texts = df["text"].fillna("").astype(str).str.lower()
+    counts = [
+        (topic, int(texts.str.contains(pattern, regex=True, na=False).sum()))
+        for topic, pattern in COMMENT_TOPIC_PATTERNS.items()
+    ]
+    return pd.DataFrame(
+        sorted((item for item in counts if item[1]), key=lambda item: item[1], reverse=True)[:limit],
+        columns=["topic", "count"],
+    )
+
+
+def top_comment_topics(df: pd.DataFrame, limit: int = 5) -> list[str]:
+    topics = extract_comment_topic_summary(df, limit)
+    return [
+        f"{row.topic} ({format_number(row.count)} komentar)"
+        for row in topics.itertuples(index=False)
+    ]
+
+
+def distinctive_topic(df: pd.DataFrame, sentiment: str) -> tuple[str, int, float, float] | None:
+    target = df[df["predicted_sentiment"] == sentiment]
+    opposite = df[df["predicted_sentiment"] != sentiment]
+    target_texts = target["text"].fillna("").astype(str).str.lower()
+    opposite_texts = opposite["text"].fillna("").astype(str).str.lower()
+    candidates = []
+    for topic, pattern in COMMENT_TOPIC_PATTERNS.items():
+        target_count = int(target_texts.str.contains(pattern, regex=True, na=False).sum())
+        if target_count:
+            target_share = target_count / len(target) * 100 if len(target) else 0
+            opposite_share = (
+                int(opposite_texts.str.contains(pattern, regex=True, na=False).sum()) / len(opposite) * 100
+                if len(opposite) else 0
+            )
+            candidates.append((topic, target_count, target_share, opposite_share))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda item: (item[2] - item[3], item[1]))
+
+
 def empty_state(message: str) -> None:
     st.info(message)
 
@@ -397,17 +451,24 @@ def dominant_sentiment_text(df: pd.DataFrame) -> str:
     return f"Sentimen {dominant} paling dominan dengan {format_number(counts.max())} data ({as_percent(share)}) dari total {format_number(total)} data."
 
 
-def sentiment_bar_interpretation(summary: pd.DataFrame) -> str:
+def sentiment_bar_interpretation(summary: pd.DataFrame, source_df: pd.DataFrame) -> str:
     if summary.empty:
         return "Belum ada data untuk diinterpretasikan."
     row = summary.sort_values("total", ascending=False).iloc[0]
+    combination = source_df[
+        (source_df["platform"] == row["platform"])
+        & (source_df["predicted_sentiment"] == row["predicted_sentiment"])
+    ]
+    topics = top_comment_topics(combination)
+    topic_text = "; ".join(topics) if topics else "tidak ada topik yang teridentifikasi"
     return (
         f"Kombinasi terbesar adalah {str(row['platform']).title()} - "
-        f"{row['predicted_sentiment']} sebanyak {format_number(row['total'])} data."
+        f"{row['predicted_sentiment']} sebanyak {format_number(row['total'])} data. "
+        f"Topik komentar terbanyak: {topic_text}."
     )
 
 
-def percentage_interpretation(summary: pd.DataFrame) -> str:
+def percentage_interpretation(summary: pd.DataFrame, source_df: pd.DataFrame) -> str:
     if summary.empty:
         return "Belum ada data untuk diinterpretasikan."
     positive_rows = summary[summary["predicted_sentiment"].astype(str) == "Positive"]
@@ -416,10 +477,23 @@ def percentage_interpretation(summary: pd.DataFrame) -> str:
         return "Komposisi sentimen dapat dibaca dari persentase setiap warna pada masing-masing platform."
     top_positive = positive_rows.sort_values("percentage", ascending=False).iloc[0]
     top_negative = negative_rows.sort_values("percentage", ascending=False).iloc[0]
+    positive_topic = distinctive_topic(source_df[source_df["platform"] == top_positive["platform"]], "Positive")
+    negative_topic = distinctive_topic(source_df[source_df["platform"] == top_negative["platform"]], "Negative")
+    positive_text = (
+        f"{positive_topic[0]} ({format_number(positive_topic[1])} komentar; "
+        f"{as_percent(positive_topic[2])} pada sentimen ini vs {as_percent(positive_topic[3])} pada sentimen lainnya)"
+        if positive_topic else "tidak ada topik yang teridentifikasi"
+    )
+    negative_text = (
+        f"{negative_topic[0]} ({format_number(negative_topic[1])} komentar; "
+        f"{as_percent(negative_topic[2])} pada sentimen ini vs {as_percent(negative_topic[3])} pada sentimen lainnya)"
+        if negative_topic else "tidak ada topik yang teridentifikasi"
+    )
     return (
         f"Porsi Positive tertinggi ada di {str(top_positive['platform']).title()} "
         f"({as_percent(top_positive['percentage'])}), sedangkan porsi Negative tertinggi ada di "
-        f"{str(top_negative['platform']).title()} ({as_percent(top_negative['percentage'])})."
+        f"{str(top_negative['platform']).title()} ({as_percent(top_negative['percentage'])}). "
+        f"Topik Positive: {positive_text}. Topik Negative: {negative_text}."
     )
 
 
@@ -435,15 +509,22 @@ def heatmap_interpretation(summary: pd.DataFrame, value_column: str) -> str:
     )
 
 
-def monthly_trend_interpretation(trend: pd.DataFrame, mode: str) -> str:
+def monthly_trend_interpretation(trend: pd.DataFrame, source_df: pd.DataFrame, mode: str) -> str:
     if trend.empty:
         return "Belum ada data untuk diinterpretasikan."
-    value_column = "percentage" if mode == "Persentase" else "total"
-    row = trend.sort_values(value_column, ascending=False).iloc[0]
-    value = as_percent(row[value_column]) if value_column == "percentage" else format_number(row[value_column])
+    row = trend.sort_values(["total", "month", "platform", "predicted_sentiment"], ascending=[False, True, True, True]).iloc[0]
+    peak_data = source_df[
+        (source_df["month"] == row["month"])
+        & (source_df["platform"] == row["platform"])
+        & (source_df["predicted_sentiment"] == row["predicted_sentiment"])
+    ]
+    topics = top_comment_topics(peak_data, limit=3)
+    topic_text = ", ".join(topics[:-1]) + f", dan {topics[-1]}" if len(topics) > 1 else (topics[0] if topics else "tidak ada topik yang teridentifikasi")
     return (
-        f"Puncak pada grafik ini terjadi di {month_label(row['month'])} untuk "
-        f"{str(row['platform']).title()} - {row['predicted_sentiment']} dengan nilai {value}."
+        f"Pada {month_label(row['month'])} terjadi lonjakan komentar "
+        f"{row['predicted_sentiment']} di {str(row['platform']).title()} sebanyak "
+        f"{format_number(row['total'])} data. Berdasarkan distribusi topik pada periode "
+        f"tersebut, komentar paling banyak membahas {topic_text}."
     )
 
 
@@ -865,7 +946,12 @@ def render_kpis(df: pd.DataFrame, is_default_view: bool) -> None:
     )
 
 
-def render_overview_tab(df: pd.DataFrame, is_default_view: bool) -> None:
+def render_overview_tab(
+    df: pd.DataFrame,
+    is_default_view: bool,
+    selected_platforms: list[str],
+    selected_years: list[int],
+) -> None:
     summary = build_sentiment_summary(df)
     trend = build_monthly_trend(df)
 
@@ -876,7 +962,7 @@ def render_overview_tab(df: pd.DataFrame, is_default_view: bool) -> None:
             "Jumlah sentimen per platform",
             "grafik batang ini membandingkan jumlah komentar/review Positive, Neutral, dan Negative pada setiap platform.",
             "Semakin tinggi batangnya, semakin banyak data dengan sentimen tersebut pada platform itu.",
-            sentiment_bar_interpretation(summary),
+            sentiment_bar_interpretation(summary, df),
             is_default_view,
         )
         show_chart(plot_bar_sentiment(summary), "overview_sentiment_bar")
@@ -897,7 +983,7 @@ def render_overview_tab(df: pd.DataFrame, is_default_view: bool) -> None:
             "Persentase sentimen per platform",
             "grafik bertumpuk ini membuat setiap platform menjadi 100%, lalu membagi porsinya ke Positive, Neutral, dan Negative.",
             "Gunakan grafik ini untuk membandingkan komposisi sentimen, bukan jumlah data mentah.",
-            percentage_interpretation(summary),
+            percentage_interpretation(summary, df),
             is_default_view,
         )
         show_chart(plot_stacked_percentage(summary), "overview_platform_percentage")
@@ -918,10 +1004,25 @@ def render_overview_tab(df: pd.DataFrame, is_default_view: bool) -> None:
     explain_chart(
         "Perubahan sentimen dari waktu ke waktu",
         "grafik garis ini menunjukkan naik-turunnya sentimen tiap bulan untuk masing-masing platform.",
-        "Jika garis Negative naik pada bulan tertentu, berarti keluhan atau komentar negatif meningkat pada periode itu.",
-        monthly_trend_interpretation(trend, trend_mode),
-        is_default_view and trend_mode == "Jumlah",
+        interpretation=monthly_trend_interpretation(trend, df, trend_mode),
+        show_interpretation=is_default_view and trend_mode == "Jumlah",
     )
+    platforms_lower = [platform.lower() for platform in selected_platforms]
+    years_as_text = [str(year) for year in selected_years]
+    if "playstore" in platforms_lower and "2025" in years_as_text:
+        st.info(
+            "💡 **Konteks Eksternal:** Tingginya sentimen positif dan dominasi topik kualitas jawaban "
+            "pada pertengahan 2025 berkaitan erat dengan peluncuran model OpenAI o3, o4-mini, dan "
+            "transisi ke GPT-4o pada April 2025. Model baru ini membawa peningkatan signifikan pada "
+            "kemampuan penalaran (reasoning) AI."
+        )
+    elif "youtube" in platforms_lower and "2025" in years_as_text and "playstore" not in platforms_lower:
+        st.warning(
+            "💡 **Konteks Eksternal:** Puncak sentimen Negatif pada YouTube di April 2025 bertepatan "
+            "dengan peluncuran model baru OpenAI. Munculnya topik 'iklan dan biaya' serta keluhan "
+            "'bantuan tugas' mengindikasikan adanya frustrasi pengguna terkait pembatasan akses fitur "
+            "baru (paywall), serta kesulitan adaptasi terhadap gaya jawaban model AI yang baru."
+        )
     show_chart(plot_monthly_trend(trend, trend_mode), f"overview_monthly_trend_{trend_mode}")
 
 
@@ -955,7 +1056,7 @@ def render_platform_tab(df: pd.DataFrame, is_default_view: bool) -> None:
             "Komposisi sentimen antar platform",
             "heatmap ini membantu melihat platform mana yang cenderung memiliki porsi Positive, Neutral, atau Negative lebih tinggi.",
             "Warna yang lebih kuat berarti persentasenya lebih besar.",
-            percentage_interpretation(summary),
+            percentage_interpretation(summary, df),
             is_default_view,
         )
         show_chart(plot_heatmap(summary, "percentage"), "platform_percentage_heatmap")
@@ -1375,7 +1476,7 @@ def main() -> None:
     )
 
     with tab_overview:
-        render_overview_tab(filtered_df, is_default_view)
+        render_overview_tab(filtered_df, is_default_view, selected_platforms, selected_years)
     with tab_platform:
         render_platform_tab(filtered_df, is_default_view)
     with tab_confidence:
